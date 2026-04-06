@@ -1,15 +1,18 @@
 import type { Metadata } from 'next'
+import { DM_Sans } from 'next/font/google'
 import './globals.css'
 import 'maplibre-gl/dist/maplibre-gl.css'
+
+const dmSans = DM_Sans({ subsets: ['latin'], display: 'swap' })
 
 export const metadata: Metadata = {
   title: 'VisualClocks — See time across the world, instantly',
   description:
-    'A beautiful full-screen world map with real-time day/night overlay, city time lookup, and pinned city clocks.',
-  keywords: ['world clock', 'time zones', 'map', 'day night', 'travel'],
+    'Beautiful world clock grid with real-time city times, analog & digital dials, and an interactive map.',
+  keywords: ['world clock', 'time zones', 'map', 'analog clock', 'digital clock', 'travel'],
   openGraph: {
     title: 'VisualClocks — See time across the world, instantly',
-    description: 'Interactive world map showing real-time local times across every timezone.',
+    description: 'See local times across the world, beautifully.',
     type: 'website',
   },
   twitter: {
@@ -21,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={dmSans.className}>
       <head>
         <meta
           name="viewport"

@@ -4,20 +4,24 @@ import type { City } from '@/types'
 import { buildNightPolygon } from '@/lib/sun'
 
 interface MapViewProps {
-  onLocationSelect: (lat: number, lng: number, name: string) => void
   pinnedCities: City[]
   adjustedDate: Date
+  onMarkerClick: (cityId: string) => void
 }
 
-export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }: MapViewProps) {
+export default function MapView({ pinnedCities, adjustedDate, onMarkerClick }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const popupRef = useRef<any>(null)
+  const onMarkerClickRef = useRef(onMarkerClick)
+  const pinnedCitiesRef = useRef(pinnedCities)
+
+  useEffect(() => { onMarkerClickRef.current = onMarkerClick }, [onMarkerClick])
+  useEffect(() => { pinnedCitiesRef.current = pinnedCities }, [pinnedCities])
 
   const updateNightLayer = useCallback((map: any, date: Date) => {
     if (!map.getSource('night-overlay')) return
-    const feature = buildNightPolygon(date)
-    ;(map.getSource('night-overlay') as any).setData(feature)
+    ;(map.getSource('night-overlay') as any).setData(buildNightPolygon(date))
   }, [])
 
   useEffect(() => {
@@ -44,7 +48,7 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
           layers: [{ id: 'carto-dark-layer', type: 'raster', source: 'carto-dark' }],
         },
         center: [0, 20],
-        zoom: 1.8,
+        zoom: 1.5,
         minZoom: 1,
         maxZoom: 18,
         attributionControl: false,
@@ -52,7 +56,6 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
 
       mapRef.current = map
 
-      // Disable rotation on mobile
       map.dragRotate.disable()
       map.touchZoomRotate.disableRotation()
 
@@ -60,107 +63,145 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
       map.on('load', () => {
-        // Night overlay layer
+        // Night overlay
         map.addSource('night-overlay', {
           type: 'geojson',
-          data: buildNightPolygon(adjustedDate),
+          data: buildNightPolygon(new Date()),
         })
         map.addLayer({
           id: 'night-fill',
           type: 'fill',
           source: 'night-overlay',
-          paint: {
-            'fill-color': '#000014',
-            'fill-opacity': 0.45,
-          },
+          paint: { 'fill-color': '#000014', 'fill-opacity': 0.4 },
         })
 
-        // Pinned city markers layer
+        // City markers source
         map.addSource('cities', {
           type: 'geojson',
           data: { type: 'FeatureCollection', features: [] },
         })
+
+        // Glow ring
+        map.addLayer({
+          id: 'city-glow',
+          type: 'circle',
+          source: 'cities',
+          paint: {
+            'circle-radius': 16,
+            'circle-color': '#C9A84C',
+            'circle-opacity': 0.12,
+            'circle-blur': 1,
+          },
+        })
+
+        // Inner dot
         map.addLayer({
           id: 'city-dots',
           type: 'circle',
           source: 'cities',
           paint: {
             'circle-radius': 5,
-            'circle-color': '#f97316',
+            'circle-color': '#C9A84C',
             'circle-stroke-width': 2,
-            'circle-stroke-color': '#fff',
+            'circle-stroke-color': 'rgba(255,255,255,0.75)',
           },
         })
+
+        // Seed initial city data
+        updateCitySource(map)
 
         map.resize()
       })
 
-      // ResizeObserver to keep map sized correctly
+      // Keep map sized correctly on container resize
       if (containerRef.current) {
-        const observer = new ResizeObserver(() => {
-          map.resize()
-        })
+        const observer = new ResizeObserver(() => map.resize())
         observer.observe(containerRef.current)
       }
 
-      // Hover tooltip
+      // Cursor: pointer over city dots
+      map.on('mouseenter', 'city-dots', () => {
+        map.getCanvas().style.cursor = 'pointer'
+      })
+      map.on('mouseleave', 'city-dots', () => {
+        map.getCanvas().style.cursor = ''
+      })
+
+      // City marker click → highlight card
+      map.on('click', 'city-dots', (e: any) => {
+        const cityId = e.features?.[0]?.properties?.id as string | undefined
+        if (cityId) onMarkerClickRef.current(cityId)
+        e.originalEvent?.stopPropagation()
+      })
+
+      // Hover tooltip (debounced, Nominatim + timezone)
       const popup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
         className: 'map-tooltip',
-        offset: 12,
+        offset: 14,
       })
       popupRef.current = popup
 
-      map.on('mousemove', async (e: any) => {
-        const { lng, lat } = e.lngLat
-        try {
-          const res = await fetch(`/api/timezone?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`)
-          const { timezone } = await res.json()
-          const time = new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false,
-          }).format(adjustedDate)
-          const offset = getOffsetString(adjustedDate, timezone)
-          const zone = timezone.replace('_', ' ').split('/').pop() ?? timezone
-          popup
-            .setLngLat(e.lngLat)
-            .setHTML(
-              `<div class="tooltip-content">
-                <div class="tooltip-zone">${zone}</div>
-                <div class="tooltip-time">${time}</div>
-                <div class="tooltip-offset">UTC${offset}</div>
-              </div>`
-            )
-            .addTo(map)
-        } catch {
-          popup.remove()
-        }
+      let hoverDebounce: ReturnType<typeof setTimeout> | null = null
+      let pendingLng = 0
+      let pendingLat = 0
+
+      map.on('mousemove', (e: any) => {
+        pendingLng = e.lngLat.lng
+        pendingLat = e.lngLat.lat
+
+        if (hoverDebounce) clearTimeout(hoverDebounce)
+        hoverDebounce = setTimeout(async () => {
+          const lat = pendingLat
+          const lng = pendingLng
+          try {
+            const [tzRes, geoRes] = await Promise.all([
+              fetch(`/api/timezone?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`),
+              fetch(
+                `https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`
+              ),
+            ])
+            const { timezone } = await tzRes.json()
+            const geoData = await geoRes.json()
+
+            const cityName: string =
+              geoData.address?.city ??
+              geoData.address?.town ??
+              geoData.address?.village ??
+              geoData.address?.county ??
+              geoData.display_name?.split(',')[0] ??
+              'Unknown'
+
+            const now = new Date()
+            const time = new Intl.DateTimeFormat('en-US', {
+              timeZone: timezone,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: false,
+            }).format(now)
+            const offset = getOffsetString(now, timezone)
+
+            popup
+              .setLngLat([lng, lat])
+              .setHTML(
+                `<div class="tooltip-content">
+                  <div class="tooltip-city">${cityName}</div>
+                  <div class="tooltip-time">${time}</div>
+                  <div class="tooltip-offset">UTC${offset}</div>
+                </div>`
+              )
+              .addTo(map)
+          } catch {
+            popup.remove()
+          }
+        }, 350)
       })
 
-      map.on('mouseleave', () => popup.remove())
-
-      map.on('click', async (e: any) => {
-        const { lng, lat } = e.lngLat
-        try {
-          const geoRes = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`
-          )
-          const geoData = await geoRes.json()
-          const cityName: string =
-            geoData.address?.city ??
-            geoData.address?.town ??
-            geoData.address?.village ??
-            geoData.address?.county ??
-            geoData.display_name?.split(',')[0] ??
-            `${lat.toFixed(2)}, ${lng.toFixed(2)}`
-          onLocationSelect(lat, lng, cityName)
-        } catch {
-          onLocationSelect(lat, lng, `${lat.toFixed(2)}, ${lng.toFixed(2)}`)
-        }
+      map.on('mouseleave', () => {
+        if (hoverDebounce) clearTimeout(hoverDebounce)
+        popup.remove()
       })
     }
 
@@ -173,7 +214,20 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Update night overlay when date changes
+  function updateCitySource(map: any) {
+    const source = map.getSource('cities') as any
+    if (!source) return
+    source.setData({
+      type: 'FeatureCollection',
+      features: pinnedCitiesRef.current.map((city) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [city.lng, city.lat] },
+        properties: { id: city.id, name: city.name, timezone: city.timezone },
+      })),
+    })
+  }
+
+  // Update night overlay
   useEffect(() => {
     if (mapRef.current?.isStyleLoaded()) {
       updateNightLayer(mapRef.current, adjustedDate)
@@ -184,22 +238,14 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
   useEffect(() => {
     const map = mapRef.current
     if (!map?.isStyleLoaded()) return
-    const source = map.getSource('cities') as any
-    if (!source) return
-    source.setData({
-      type: 'FeatureCollection',
-      features: pinnedCities.map((city) => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [city.lng, city.lat] },
-        properties: { name: city.name },
-      })),
-    })
+    updateCitySource(map)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinnedCities])
 
   return (
     <div
       ref={containerRef}
-      style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
+      style={{ width: '100%', height: '100%', position: 'relative' }}
     />
   )
 }

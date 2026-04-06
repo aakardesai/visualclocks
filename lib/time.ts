@@ -54,7 +54,7 @@ export function isDaytime(date: Date, timezone: string): boolean {
       }).format(date),
       10
     )
-    return hour >= 6 && hour < 20
+    return hour >= 6 && hour < 18
   } catch {
     return true
   }

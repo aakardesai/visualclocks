@@ -72,7 +72,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
   }
 
   return (
-    <div className="relative w-full max-w-sm">
+    <div className="relative w-full max-w-[200px] sm:max-w-[240px]">
       <div className="relative">
         <svg
           className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40"
@@ -93,8 +93,8 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
           onChange={handleChange}
           onBlur={handleBlur}
           onFocus={() => results.length > 0 && setIsOpen(true)}
-          placeholder="Search city..."
-          className="w-full bg-white/10 backdrop-blur-md border border-white/15 rounded-xl pl-9 pr-4 py-2.5 text-white text-sm placeholder-white/40 outline-none focus:border-white/30 focus:bg-white/15 transition-all"
+          placeholder="Add city..."
+          className="w-full bg-white/8 backdrop-blur-md border border-white/10 rounded-lg pl-9 pr-4 py-1.5 text-white text-sm placeholder-white/35 outline-none focus:border-[#C9A84C]/40 focus:bg-white/10 transition-all"
         />
         {loading && (
           <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -103,7 +103,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
         )}
       </div>
       {isOpen && results.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1.5 bg-[#111827]/95 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden shadow-2xl z-50">
+        <div className="absolute top-full right-0 mt-1.5 bg-[#0D0D14]/95 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden shadow-2xl z-50 min-w-[260px]">
           {results.map((r) => (
             <button
               key={r.id}
@@ -111,7 +111,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
               className="w-full text-left px-4 py-3 hover:bg-white/10 transition-colors flex items-center gap-3 group"
             >
               <svg
-                className="w-4 h-4 text-orange-400 shrink-0"
+                className="w-4 h-4 shrink-0" style={{ color: '#C9A84C' }}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
