@@ -28,7 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
         />
       </head>
-      <body className="antialiased" style={{ height: '100dvh', overflow: 'hidden' }}>
+      <body className="antialiased" style={{ margin: 0, padding: 0 }}>
         {children}
       </body>
     </html>

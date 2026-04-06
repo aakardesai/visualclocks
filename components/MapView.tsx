@@ -2,22 +2,38 @@
 import { useEffect, useRef, useCallback } from 'react'
 import type { City } from '@/types'
 import { buildNightPolygon } from '@/lib/sun'
+import { formatTimeShort, getUtcOffset } from '@/lib/time'
 
 interface MapViewProps {
   onLocationSelect: (lat: number, lng: number, name: string) => void
+  onCityMarkerClick?: (cityId: string) => void
   pinnedCities: City[]
   adjustedDate: Date
 }
 
-export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }: MapViewProps) {
+export default function MapView({
+  onLocationSelect,
+  onCityMarkerClick,
+  pinnedCities,
+  adjustedDate,
+}: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const popupRef = useRef<any>(null)
+  // Always-current ref so event handlers don't stale-close over adjustedDate
+  const adjustedDateRef = useRef(adjustedDate)
+  const citiesRef = useRef(pinnedCities)
+  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onCityMarkerClickRef = useRef(onCityMarkerClick)
+
+  // Keep refs current
+  useEffect(() => { adjustedDateRef.current = adjustedDate }, [adjustedDate])
+  useEffect(() => { citiesRef.current = pinnedCities }, [pinnedCities])
+  useEffect(() => { onCityMarkerClickRef.current = onCityMarkerClick }, [onCityMarkerClick])
 
   const updateNightLayer = useCallback((map: any, date: Date) => {
     if (!map.getSource('night-overlay')) return
-    const feature = buildNightPolygon(date)
-    ;(map.getSource('night-overlay') as any).setData(feature)
+    ;(map.getSource('night-overlay') as any).setData(buildNightPolygon(date))
   }, [])
 
   useEffect(() => {
@@ -44,7 +60,7 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
           layers: [{ id: 'carto-dark-layer', type: 'raster', source: 'carto-dark' }],
         },
         center: [0, 20],
-        zoom: 1.8,
+        zoom: 1.4,
         minZoom: 1,
         maxZoom: 18,
         attributionControl: false,
@@ -52,98 +68,150 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
 
       mapRef.current = map
 
-      // Disable rotation on mobile
       map.dragRotate.disable()
       map.touchZoomRotate.disableRotation()
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
+      // Hover tooltip popup
+      const popup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        className: 'map-tooltip',
+        offset: 14,
+        maxWidth: '240px',
+      })
+      popupRef.current = popup
+
       map.on('load', () => {
-        // Night overlay layer
+        // Night overlay
         map.addSource('night-overlay', {
           type: 'geojson',
-          data: buildNightPolygon(adjustedDate),
+          data: buildNightPolygon(adjustedDateRef.current),
         })
         map.addLayer({
           id: 'night-fill',
           type: 'fill',
           source: 'night-overlay',
-          paint: {
-            'fill-color': '#000014',
-            'fill-opacity': 0.45,
-          },
+          paint: { 'fill-color': '#000014', 'fill-opacity': 0.45 },
         })
 
-        // Pinned city markers layer
+        // City markers — two layers (glow + dot)
         map.addSource('cities', {
           type: 'geojson',
           data: { type: 'FeatureCollection', features: [] },
         })
+        // Outer glow
+        map.addLayer({
+          id: 'city-glow',
+          type: 'circle',
+          source: 'cities',
+          paint: {
+            'circle-radius': 14,
+            'circle-color': '#C9A84C',
+            'circle-opacity': 0.18,
+            'circle-blur': 1,
+          },
+        })
+        // Main dot
         map.addLayer({
           id: 'city-dots',
           type: 'circle',
           source: 'cities',
           paint: {
             'circle-radius': 5,
-            'circle-color': '#f97316',
-            'circle-stroke-width': 2,
-            'circle-stroke-color': '#fff',
+            'circle-color': '#C9A84C',
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': 'rgba(255,255,255,0.85)',
+            'circle-opacity': 1,
           },
         })
 
         map.resize()
       })
 
-      // ResizeObserver to keep map sized correctly
+      // ResizeObserver
       if (containerRef.current) {
-        const observer = new ResizeObserver(() => {
-          map.resize()
-        })
+        const observer = new ResizeObserver(() => map.resize())
         observer.observe(containerRef.current)
       }
 
-      // Hover tooltip
-      const popup = new maplibregl.Popup({
-        closeButton: false,
-        closeOnClick: false,
-        className: 'map-tooltip',
-        offset: 12,
-      })
-      popupRef.current = popup
+      // Debounced hover tooltip
+      map.on('mousemove', (e: any) => {
+        if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current)
+        tooltipTimerRef.current = setTimeout(async () => {
+          const { lng, lat } = e.lngLat
+          try {
+            const [tzRes, geoRes] = await Promise.all([
+              fetch(`/api/timezone?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`),
+              fetch(
+                `https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`
+              ),
+            ])
+            const { timezone } = await tzRes.json()
+            const geoData = await geoRes.json()
 
-      map.on('mousemove', async (e: any) => {
-        const { lng, lat } = e.lngLat
-        try {
-          const res = await fetch(`/api/timezone?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`)
-          const { timezone } = await res.json()
-          const time = new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false,
-          }).format(adjustedDate)
-          const offset = getOffsetString(adjustedDate, timezone)
-          const zone = timezone.replace('_', ' ').split('/').pop() ?? timezone
-          popup
-            .setLngLat(e.lngLat)
-            .setHTML(
-              `<div class="tooltip-content">
-                <div class="tooltip-zone">${zone}</div>
-                <div class="tooltip-time">${time}</div>
-                <div class="tooltip-offset">UTC${offset}</div>
-              </div>`
-            )
-            .addTo(map)
-        } catch {
-          popup.remove()
+            const cityName: string =
+              geoData.address?.city ??
+              geoData.address?.town ??
+              geoData.address?.village ??
+              geoData.address?.county ??
+              geoData.display_name?.split(',')[0] ??
+              `${lat.toFixed(2)}, ${lng.toFixed(2)}`
+
+            const date = adjustedDateRef.current
+            const time = formatTimeShort(date, timezone)
+            const offset = getUtcOffset(date, timezone)
+
+            popup
+              .setLngLat(e.lngLat)
+              .setHTML(
+                `<div class="tooltip-content">
+                  <div class="tooltip-city">${cityName}</div>
+                  <div class="tooltip-time">${time}</div>
+                  <div class="tooltip-offset">UTC${offset}</div>
+                </div>`
+              )
+              .addTo(map)
+          } catch {
+            popup.remove()
+          }
+        }, 220)
+      })
+
+      map.on('mouseleave', () => {
+        if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current)
+        popup.remove()
+      })
+
+      // Click on city marker → highlight card
+      map.on('click', 'city-dots', (e: any) => {
+        e.preventDefault()
+        const feature = e.features?.[0]
+        if (!feature) return
+        const cityId = feature.properties?.id as string | undefined
+        if (cityId) {
+          onCityMarkerClickRef.current?.(cityId)
+          // Scroll to card
+          const el = document.getElementById(`clock-${cityId}`)
+          el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
         }
       })
 
-      map.on('mouseleave', () => popup.remove())
+      map.on('mouseenter', 'city-dots', () => {
+        map.getCanvas().style.cursor = 'pointer'
+      })
+      map.on('mouseleave', 'city-dots', () => {
+        map.getCanvas().style.cursor = ''
+      })
 
+      // Click elsewhere on map → reverse geocode + add city
       map.on('click', async (e: any) => {
+        // If the click was on a city dot, don't add a new city
+        const features = map.queryRenderedFeatures(e.point, { layers: ['city-dots'] })
+        if (features.length > 0) return
+
         const { lng, lat } = e.lngLat
         try {
           const geoRes = await fetch(
@@ -167,6 +235,7 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
     init()
 
     return () => {
+      if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current)
       mapRef.current?.remove()
       mapRef.current = null
     }
@@ -180,7 +249,7 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
     }
   }, [adjustedDate, updateNightLayer])
 
-  // Update city markers
+  // Update city markers (include id in properties for click handler)
   useEffect(() => {
     const map = mapRef.current
     if (!map?.isStyleLoaded()) return
@@ -191,7 +260,7 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
       features: pinnedCities.map((city) => ({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [city.lng, city.lat] },
-        properties: { name: city.name },
+        properties: { id: city.id, name: city.name },
       })),
     })
   }, [pinnedCities])
@@ -202,17 +271,4 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
       style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
     />
   )
-}
-
-function getOffsetString(date: Date, timezone: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat('en', {
-      timeZone: timezone,
-      timeZoneName: 'shortOffset',
-    }).formatToParts(date)
-    const offset = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT'
-    return offset.replace('GMT', '') || '+0'
-  } catch {
-    return '+0'
-  }
 }

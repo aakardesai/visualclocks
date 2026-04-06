@@ -1,5 +1,5 @@
 /**
- * Format a Date in a given IANA timezone to "HH:MM:SS" format.
+ * Format a Date in a given IANA timezone to "HH:MM:SS" format (24hr).
  */
 export function formatTime(date: Date, timezone: string): string {
   try {
@@ -12,6 +12,22 @@ export function formatTime(date: Date, timezone: string): string {
     }).format(date)
   } catch {
     return '--:--:--'
+  }
+}
+
+/**
+ * Format a Date in a given timezone for display (no seconds).
+ */
+export function formatTimeShort(date: Date, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(date)
+  } catch {
+    return '--:--'
   }
 }
 
@@ -54,7 +70,7 @@ export function isDaytime(date: Date, timezone: string): boolean {
       }).format(date),
       10
     )
-    return hour >= 6 && hour < 20
+    return hour >= 6 && hour < 18
   } catch {
     return true
   }
