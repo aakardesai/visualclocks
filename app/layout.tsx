@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import 'mapbox-gl/dist/mapbox-gl.css'
+import 'maplibre-gl/dist/maplibre-gl.css'
 
 export const metadata: Metadata = {
   title: 'VisualClocks — See time across the world, instantly',
@@ -22,7 +22,15 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <head>
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+        />
+      </head>
+      <body className="antialiased" style={{ height: '100dvh', overflow: 'hidden' }}>
+        {children}
+      </body>
     </html>
   )
 }

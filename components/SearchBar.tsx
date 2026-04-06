@@ -1,5 +1,4 @@
 'use client'
-
 import { useState, useRef, useCallback } from 'react'
 import type { SearchResult } from '@/types'
 
@@ -20,20 +19,30 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
       setIsOpen(false)
       return
     }
-
     setLoading(true)
     try {
-      const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
       const res = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${token}&types=place&limit=6`
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&addressdetails=1`
       )
       const data = await res.json()
-      const parsed: SearchResult[] = (data.features ?? []).map((f: any) => {
-        const [lng, lat] = f.center
-        const name = f.text
-        const country =
-          f.context?.find((c: any) => c.id.startsWith('country'))?.text ?? ''
-        return { id: f.id, name, country, lat, lng, placeName: f.place_name }
+      const parsed: SearchResult[] = (data ?? []).map((f: any) => {
+        const lat = parseFloat(f.lat)
+        const lng = parseFloat(f.lon)
+        const cityName: string =
+          f.address?.city ??
+          f.address?.town ??
+          f.address?.village ??
+          f.address?.county ??
+          f.display_name.split(',')[0]
+        const country = f.address?.country_code?.toUpperCase() ?? ''
+        return {
+          id: f.place_id?.toString() ?? `${lat}-${lng}`,
+          name: cityName,
+          country,
+          lat,
+          lng,
+          placeName: f.display_name,
+        }
       })
       setResults(parsed)
       setIsOpen(parsed.length > 0)
@@ -93,7 +102,6 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
           </div>
         )}
       </div>
-
       {isOpen && results.length > 0 && (
         <div className="absolute top-full left-0 right-0 mt-1.5 bg-[#111827]/95 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden shadow-2xl z-50">
           {results.map((r) => (

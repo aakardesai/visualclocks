@@ -1,5 +1,4 @@
 'use client'
-
 import { useState, useEffect, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import type { City, SearchResult } from '@/types'
@@ -9,7 +8,7 @@ import SearchBar from '@/components/SearchBar'
 import CityList from '@/components/CityList'
 import TimeScrubber from '@/components/TimeScrubber'
 
-// Mapbox GL JS requires browser APIs — must be dynamically imported
+// MapLibre GL JS requires browser APIs — must be dynamically imported
 const MapView = dynamic(() => import('@/components/MapView'), { ssr: false })
 
 const UTC_CITY: City = {
@@ -46,7 +45,6 @@ export default function Page() {
 
     // Default: UTC + user location
     const defaults: City[] = [UTC_CITY]
-
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
@@ -55,16 +53,19 @@ export default function Page() {
             const [tzRes, geoRes] = await Promise.all([
               fetch(`/api/timezone?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`),
               fetch(
-                `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng.toFixed(4)},${lat.toFixed(4)}.json?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&types=place,region&limit=1`
+                `https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`
               ),
             ])
             const { timezone } = await tzRes.json()
             const geoData = await geoRes.json()
-            const feature = geoData.features?.[0]
-            const name: string = feature?.text ?? 'My Location'
+            const name: string =
+              geoData.address?.city ??
+              geoData.address?.town ??
+              geoData.address?.village ??
+              geoData.address?.county ??
+              'My Location'
             const country: string =
-              feature?.context?.find((c: any) => c.id.startsWith('country'))?.short_code?.toUpperCase() ?? ''
-
+              geoData.address?.country_code?.toUpperCase() ?? ''
             const userCity: City = {
               id: `user-${Date.now()}`,
               name,
@@ -107,7 +108,6 @@ export default function Page() {
       try {
         const res = await fetch(`/api/timezone?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`)
         const { timezone } = await res.json()
-
         const city: City = {
           id: `city-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           name,
@@ -116,7 +116,6 @@ export default function Page() {
           lng,
           timezone,
         }
-
         setCities((prev) => {
           // Avoid duplicates by timezone + rough location
           const exists = prev.some(
@@ -154,7 +153,10 @@ export default function Page() {
   }, [])
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#0a0f1e]">
+    <div
+      className="relative w-screen overflow-hidden bg-[#0a0f1e]"
+      style={{ height: '100dvh' }}
+    >
       {/* Full-screen map */}
       <MapView
         onLocationSelect={handleMapClick}
@@ -184,11 +186,11 @@ export default function Page() {
         <div className="w-8 sm:w-[110px]" />
       </header>
 
-      {/* Bottom panel */}
-      <aside className="absolute bottom-0 left-0 right-0 z-10 flex justify-center pb-4 px-4 pointer-events-none">
+      {/* Bottom city panel — fixed overlay, does not affect map layout */}
+      <aside className="fixed bottom-0 left-0 right-0 z-10 flex justify-center pb-4 px-4 pointer-events-none">
         <div
           className="w-full max-w-md bg-[#0d1526]/90 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl pointer-events-auto"
-          style={{ maxHeight: 'calc(100vh - 120px)' }}
+          style={{ maxHeight: 'calc(100dvh - 120px)' }}
         >
           {/* Panel header */}
           <div className="px-4 pt-3 pb-1 flex items-center justify-between">

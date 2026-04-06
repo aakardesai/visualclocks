@@ -1,5 +1,4 @@
 'use client'
-
 import { useEffect, useRef, useCallback } from 'react'
 import type { City } from '@/types'
 import { buildNightPolygon } from '@/lib/sun'
@@ -12,42 +11,53 @@ interface MapViewProps {
 
 export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<mapboxgl.Map | null>(null)
-  const popupRef = useRef<mapboxgl.Popup | null>(null)
+  const mapRef = useRef<any>(null)
+  const popupRef = useRef<any>(null)
 
-  const updateNightLayer = useCallback((map: mapboxgl.Map, date: Date) => {
+  const updateNightLayer = useCallback((map: any, date: Date) => {
     if (!map.getSource('night-overlay')) return
     const feature = buildNightPolygon(date)
-    ;(map.getSource('night-overlay') as mapboxgl.GeoJSONSource).setData(feature)
+    ;(map.getSource('night-overlay') as any).setData(feature)
   }, [])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
     if (!containerRef.current || mapRef.current) return
 
-    let map: mapboxgl.Map
+    let map: any
 
     const init = async () => {
-      const mapboxgl = (await import('mapbox-gl')).default
+      const maplibregl = (await import('maplibre-gl')).default
 
-      mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? ''
-
-      map = new mapboxgl.Map({
+      map = new maplibregl.Map({
         container: containerRef.current!,
-        style: 'mapbox://styles/mapbox/dark-v11',
+        style: {
+          version: 8,
+          sources: {
+            'carto-dark': {
+              type: 'raster',
+              tiles: ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'],
+              tileSize: 256,
+              attribution: '© OpenStreetMap contributors, © CARTO',
+            },
+          },
+          layers: [{ id: 'carto-dark-layer', type: 'raster', source: 'carto-dark' }],
+        },
         center: [0, 20],
         zoom: 1.8,
         minZoom: 1,
         maxZoom: 18,
         attributionControl: false,
-        logoPosition: 'bottom-right',
       })
+
       mapRef.current = map
 
-      map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right')
-      map.addControl(
-        new mapboxgl.AttributionControl({ compact: true }),
-        'bottom-right'
-      )
+      // Disable rotation on mobile
+      map.dragRotate.disable()
+      map.touchZoomRotate.disableRotation()
+
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
+      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
       map.on('load', () => {
         // Night overlay layer
@@ -81,10 +91,20 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
             'circle-stroke-color': '#fff',
           },
         })
+
+        map.resize()
       })
 
+      // ResizeObserver to keep map sized correctly
+      if (containerRef.current) {
+        const observer = new ResizeObserver(() => {
+          map.resize()
+        })
+        observer.observe(containerRef.current)
+      }
+
       // Hover tooltip
-      const popup = new mapboxgl.Popup({
+      const popup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
         className: 'map-tooltip',
@@ -92,7 +112,7 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
       })
       popupRef.current = popup
 
-      map.on('mousemove', async (e) => {
+      map.on('mousemove', async (e: any) => {
         const { lng, lat } = e.lngLat
         try {
           const res = await fetch(`/api/timezone?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`)
@@ -106,7 +126,6 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
           }).format(adjustedDate)
           const offset = getOffsetString(adjustedDate, timezone)
           const zone = timezone.replace('_', ' ').split('/').pop() ?? timezone
-
           popup
             .setLngLat(e.lngLat)
             .setHTML(
@@ -124,17 +143,21 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
 
       map.on('mouseleave', () => popup.remove())
 
-      map.on('click', async (e) => {
+      map.on('click', async (e: any) => {
         const { lng, lat } = e.lngLat
         try {
-          const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
           const geoRes = await fetch(
-            `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng.toFixed(4)},${lat.toFixed(4)}.json?access_token=${token}&types=place,region,country&limit=1`
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`
           )
           const geoData = await geoRes.json()
-          const placeName: string =
-            geoData.features?.[0]?.place_name ?? `${lat.toFixed(2)}, ${lng.toFixed(2)}`
-          onLocationSelect(lat, lng, placeName)
+          const cityName: string =
+            geoData.address?.city ??
+            geoData.address?.town ??
+            geoData.address?.village ??
+            geoData.address?.county ??
+            geoData.display_name?.split(',')[0] ??
+            `${lat.toFixed(2)}, ${lng.toFixed(2)}`
+          onLocationSelect(lat, lng, cityName)
         } catch {
           onLocationSelect(lat, lng, `${lat.toFixed(2)}, ${lng.toFixed(2)}`)
         }
@@ -161,10 +184,8 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
   useEffect(() => {
     const map = mapRef.current
     if (!map?.isStyleLoaded()) return
-
-    const source = map.getSource('cities') as mapboxgl.GeoJSONSource | undefined
+    const source = map.getSource('cities') as any
     if (!source) return
-
     source.setData({
       type: 'FeatureCollection',
       features: pinnedCities.map((city) => ({
@@ -175,7 +196,12 @@ export default function MapView({ onLocationSelect, pinnedCities, adjustedDate }
     })
   }, [pinnedCities])
 
-  return <div ref={containerRef} className="absolute inset-0" />
+  return (
+    <div
+      ref={containerRef}
+      style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
+    />
+  )
 }
 
 function getOffsetString(date: Date, timezone: string): string {
